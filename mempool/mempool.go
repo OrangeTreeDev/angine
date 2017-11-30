@@ -134,6 +134,7 @@ func (mem *Mempool) CheckTx(tx types.Tx) (err error) {
 		tx:      tx,
 	}
 	mem.txs.PushBack(memTx)
+
 	return nil
 }
 
@@ -199,7 +200,6 @@ func (mem *Mempool) refreshMempoolTxs(blockTxsMap map[string]struct{}) {
 			e.DetachPrev()
 			// mem.cache.Remove(memTx.tx)
 		}
-		mem.cache.Remove(memTx.tx)
 	}
 }
 

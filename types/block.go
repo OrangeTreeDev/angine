@@ -80,10 +80,10 @@ func (b *Block) ValidateBasic(chainID string, lastBlockHeight int, lastBlockID B
 		return errors.New(Fmt("Wrong Block.Header.ChainID. Expected %v, got %v", chainID, b.ChainID))
 	}
 	if b.Height != lastBlockHeight+1 {
-		return errors.New(Fmt("Wrong Block.Header.Height. Expected %v, got %v", lastBlockHeight+1, b.Height))
+		return errors.New(Fmt("(%s) Wrong Block.Header.Height. Expected %v, got %v", chainID, lastBlockHeight+1, b.Height))
 	}
 	if b.LastNonEmptyHeight != nonEmptyHeight {
-		return errors.New(Fmt("Wrong Block.Header.LastNonEmptyHeight. Expected %v, got %v", nonEmptyHeight, b.LastNonEmptyHeight))
+		return errors.New(Fmt("(%s) Wrong Block.Header.LastNonEmptyHeight. Expected %v, got %v", chainID, nonEmptyHeight, b.LastNonEmptyHeight))
 	}
 	/*	TODO: Determine bounds for Time
 		See blockchain/reactor "stopSyncingDurationMinutes"
@@ -93,13 +93,13 @@ func (b *Block) ValidateBasic(chainID string, lastBlockHeight int, lastBlockID B
 		}
 	*/
 	if b.NumTxs != len(b.Data.Txs)+len(b.Data.ExTxs) {
-		return errors.New(Fmt("Wrong Block.Header.NumTxs. Expected %v, got %v", len(b.Data.Txs)+len(b.Data.ExTxs), b.NumTxs))
+		return errors.New(Fmt("(%s) Wrong Block.Header.NumTxs. Expected %v, got %v", chainID, len(b.Data.Txs)+len(b.Data.ExTxs), b.NumTxs))
 	}
 	if !b.LastBlockID.Equals(lastBlockID) {
-		return errors.New(Fmt("Wrong Block.Header.LastBlockID.  Expected %v, got %v", lastBlockID, b.LastBlockID))
+		return errors.New(Fmt("(%s) Wrong Block.Header.LastBlockID.  Expected %v, got %v", chainID, lastBlockID, b.LastBlockID))
 	}
 	if !bytes.Equal(b.LastCommitHash, b.LastCommit.Hash()) {
-		return errors.New(Fmt("Wrong Block.Header.LastCommitHash.  Expected %X, got %X", b.LastCommitHash, b.LastCommit.Hash()))
+		return errors.New(Fmt("(%s) Wrong Block.Header.LastCommitHash.  Expected %X, got %X", chainID, b.LastCommitHash, b.LastCommit.Hash()))
 	}
 	if b.Header.Height != 1 {
 		if err := b.LastCommit.ValidateBasic(); err != nil {
@@ -107,13 +107,13 @@ func (b *Block) ValidateBasic(chainID string, lastBlockHeight int, lastBlockID B
 		}
 	}
 	if !bytes.Equal(b.DataHash, b.Data.Hash()) {
-		return errors.New(Fmt("Wrong Block.Header.DataHash.  Expected %X, got %X", b.DataHash, b.Data.Hash()))
+		return errors.New(Fmt("(%s) Wrong Block.Header.DataHash.  Expected %X, got %X", chainID, b.DataHash, b.Data.Hash()))
 	}
 	if !bytes.Equal(b.AppHash, appHash) {
-		return errors.New(Fmt("Wrong Block.Header.AppHash.  Expected %X, got %X", appHash, b.AppHash))
+		return errors.New(Fmt("(%s) Wrong Block.Header.AppHash.  Expected %X, got %X", chainID, appHash, b.AppHash))
 	}
 	if !bytes.Equal(b.ReceiptsHash, receiptsHash) {
-		return errors.New(Fmt("Wrong Block.Header.ReceiptsHash.  Expected %X, got %X", receiptsHash, b.ReceiptsHash))
+		return errors.New(Fmt("(%s) Wrong Block.Header.ReceiptsHash.  Expected %X, got %X", chainID, receiptsHash, b.ReceiptsHash))
 	}
 	// NOTE: the AppHash and ValidatorsHash are validated later.
 	return nil

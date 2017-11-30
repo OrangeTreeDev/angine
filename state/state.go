@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pkg/errors"
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
 
@@ -124,29 +125,31 @@ func (s *State) SaveIntermediate() {
 
 // Load the intermediate state into the current state
 // and do some sanity checks
-func (s *State) LoadIntermediate() {
+func (s *State) LoadIntermediate() error {
 	s2 := loadState(s.db, stateIntermediateKey)
 	if s.ChainID != s2.ChainID {
-		PanicSanity(Fmt("State mismatch for ChainID. Got %v, Expected %v", s2.ChainID, s.ChainID))
+		return errors.Errorf("State mismatch for ChainID. Got %v, Expected %v", s2.ChainID, s.ChainID)
 	}
 
 	if s.LastBlockHeight+1 != s2.LastBlockHeight {
-		PanicSanity(Fmt("State mismatch for LastBlockHeight. Got %v, Expected %v", s2.LastBlockHeight, s.LastBlockHeight+1))
+		return errors.Errorf("State mismatch for LastBlockHeight. Got %v, Expected %v", s2.LastBlockHeight, s.LastBlockHeight+1)
 	}
 
 	if !bytes.Equal(s.Validators.Hash(), s2.LastValidators.Hash()) {
-		PanicSanity(Fmt("State mismatch for LastValidators. Got %X, Expected %X", s2.LastValidators.Hash(), s.Validators.Hash()))
+		return errors.Errorf("State mismatch for LastValidators. Got %X, Expected %X", s2.LastValidators.Hash(), s.Validators.Hash())
 	}
 
 	if !bytes.Equal(s.AppHash, s2.AppHash) {
-		PanicSanity(Fmt("State mismatch for AppHash. Got %X, Expected %X", s2.AppHash, s.AppHash))
+		return errors.Errorf("State mismatch for AppHash. Got %X, Expected %X", s2.AppHash, s.AppHash)
 	}
 
 	if !bytes.Equal(s.ReceiptsHash, s2.ReceiptsHash) {
-		PanicSanity(Fmt("State mismatch for ReceiptsHash. Got %X, Expected %X", s2.ReceiptsHash, s.ReceiptsHash))
+		return errors.Errorf("State mismatch for ReceiptsHash. Got %X, Expected %X", s2.ReceiptsHash, s.ReceiptsHash)
 	}
 
 	s.setBlockAndValidators(s2.LastBlockHeight, s2.LastNonEmptyHeight, s2.LastBlockID, s2.LastBlockTime, s2.Validators.Copy(), s2.LastValidators.Copy())
+
+	return nil
 }
 
 func (s *State) Equals(s2 *State) bool {
@@ -158,7 +161,8 @@ func (s *State) Bytes() []byte {
 	buf, n, err := new(bytes.Buffer), new(int), new(error)
 	wire.WriteBinary(s, buf, n, err)
 	if *err != nil {
-		PanicCrisis(*err)
+		s.logger.Error("State.Bytes", zap.Error(*err))
+		return []byte{}
 	}
 	return buf.Bytes()
 }
@@ -268,7 +272,7 @@ func MakeGenesisState(logger *zap.Logger, db dbm.DB, genDoc *types.GenesisDoc) *
 		case "":
 			// no core_plugins is allowed, so just ignore it
 		default:
-			PanicSanity(Fmt("Invalid plugin: %v", pn))
+
 		}
 	}
 

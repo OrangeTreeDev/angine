@@ -33,7 +33,7 @@ type Application interface {
 	GetAttributes() map[string]string
 	GetAngineHooks() Hooks
 	CompatibleWithAngine()
-	CheckTx([]byte) Result
+	CheckTx([]byte) error
 	Query([]byte) Result
 	Info() ResultInfo
 	Start() error

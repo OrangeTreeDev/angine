@@ -38,6 +38,13 @@ skip_upnp = true
 
 log_path = ""
 
+# archive , if threshold_blocks > 0 
+threshold_blocks = 900
+ti_endpoint = "http://11382-zis-other-ti-capsule-anlinkapiserver.test.za-tech.net"
+ti_key = "ZWViMTYyNWJlMTNmNDg5NDg2MTA1Mzhl"
+ti_secret = "MjJkZWMzMDUyMjM5NDc3YTkxYzZlNjkxMjA5NGQ2YTQ4Mzc3YzlmMmQ1ZDc0MDdj"
+
+
 #log_level:
 	# -1 DebugLevel logs are typically voluminous, and are usually disabled in production.
 	#  0 InfoLevel is the default logging priority.

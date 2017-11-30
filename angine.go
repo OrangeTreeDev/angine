@@ -20,6 +20,7 @@ import (
 	"io/ioutil"
 	"os"
 	"path"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -29,14 +30,16 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/annchain/angine/blockchain"
+	"github.com/annchain/angine/blockchain/archive"
+	"github.com/annchain/angine/blockchain/refuse_list"
 	ac "github.com/annchain/angine/config"
 	"github.com/annchain/angine/consensus"
 	"github.com/annchain/angine/mempool"
 	"github.com/annchain/angine/plugin"
-	"github.com/annchain/angine/refuse_list"
 	"github.com/annchain/angine/state"
 	"github.com/annchain/angine/trace"
 	"github.com/annchain/angine/types"
+	"github.com/annchain/angine/utils/zip"
 	"github.com/annchain/ann-module/lib/ed25519"
 	cmn "github.com/annchain/ann-module/lib/go-common"
 	crypto "github.com/annchain/ann-module/lib/go-crypto"
@@ -44,6 +47,7 @@ import (
 	"github.com/annchain/ann-module/lib/go-events"
 	p2p "github.com/annchain/ann-module/lib/go-p2p"
 	"github.com/annchain/ann-module/lib/go-wire"
+	"github.com/annchain/go-sdk/ti"
 )
 
 const version = "0.6.0"
@@ -60,9 +64,12 @@ type (
 
 		statedb       dbm.DB
 		blockdb       dbm.DB
+		archivedb     dbm.DB
 		querydb       dbm.DB
 		privValidator *types.PrivValidator
 		blockstore    *blockchain.BlockStore
+		dataArchive   *archive.Archive
+		conf          *viper.Viper
 		mempool       *mempool.Mempool
 		consensus     *consensus.ConsensusState
 		traceRouter   *trace.Router
@@ -99,7 +106,7 @@ func ProtocolAndAddress(listenAddr string) (string, string) {
 
 // Initialize generates genesis.json and priv_validator.json automatically.
 // It is usually used with commands like "init" before user put the node into running.
-func Initialize(tune *Tunes) {
+func Initialize(tune *Tunes, chainID string) {
 	var conf *viper.Viper
 	if tune.Conf == nil {
 		conf = ac.GetConfig(tune.Runtime)
@@ -114,7 +121,7 @@ func Initialize(tune *Tunes) {
 		Amount: 100,
 		IsCA:   true,
 	}}
-	genDoc, err := genGenesiFile(conf.GetString("genesis_file"), gvs)
+	genDoc, err := genGenesiFile(conf.GetString("genesis_file"), chainID, gvs)
 	if err != nil {
 		cmn.PanicSanity(err)
 	}
@@ -135,8 +142,10 @@ func NewAngine(lgr *zap.Logger, tune *Tunes) *Angine {
 
 	dbBackend := conf.GetString("db_backend")
 	dbDir := conf.GetString("db_dir")
+	dbArchiveDir := conf.GetString("db_archive_dir")
 	stateDB := dbm.NewDB("state", dbBackend, dbDir)
 	blockStoreDB := dbm.NewDB("blockstore", dbBackend, dbDir)
+	archiveDB := dbm.NewDB("blockstore", dbBackend, dbArchiveDir)
 	querydb, err := ensureQueryDB(dbDir)
 	if err != nil {
 		// querydb failure is something that we can bear with
@@ -188,13 +197,17 @@ func NewAngine(lgr *zap.Logger, tune *Tunes) *Angine {
 	} else if tune.Runtime == "" {
 		tune.Runtime = conf.GetString("runtime")
 	}
+	dataArchive := archive.NewArchive(dbBackend, dbDir, conf.GetInt("threshold_blocks"))
 	angine := &Angine{
 		Tune: tune,
 
-		statedb: stateDB,
-		blockdb: blockStoreDB,
-		querydb: querydb,
-		tune:    tune,
+		statedb:     stateDB,
+		blockdb:     blockStoreDB,
+		archivedb:   archiveDB,
+		querydb:     querydb,
+		tune:        tune,
+		dataArchive: dataArchive,
+		conf:        conf,
 
 		p2pSwitch:     p2psw,
 		eventSwitch:   &eventSwitch,
@@ -210,7 +223,13 @@ func NewAngine(lgr *zap.Logger, tune *Tunes) *Angine {
 	if gotGenesis {
 		angine.assembleStateMachine(stateM)
 	} else {
-		p2psw.SetGenesisUnmarshal(func(b []byte) error {
+		p2psw.SetGenesisUnmarshal(func(b []byte) (err error) {
+			defer func() {
+				if e := recover(); e != nil {
+					err = errors.Errorf("%v", e)
+				}
+			}()
+
 			g := types.GenesisDocFromJSON(b)
 			if g.ChainID != chainID {
 				return fmt.Errorf("wrong chain id from genesis, expect %v, got %v", chainID, g.ChainID)
@@ -241,9 +260,9 @@ func (ang *Angine) assembleStateMachine(stateM *state.State) {
 	stateM.SetLogger(ang.logger)
 	stateM.SetQueryDB(ang.querydb)
 
-	blockStore := blockchain.NewBlockStore(ang.blockdb)
+	blockStore := blockchain.NewBlockStore(ang.blockdb, ang.archivedb)
 	_, stateLastHeight, _ := stateM.GetLastBlockInfo()
-	bcReactor := blockchain.NewBlockchainReactor(ang.logger, conf, stateLastHeight, blockStore, fastSync)
+	bcReactor := blockchain.NewBlockchainReactor(ang.logger, conf, stateLastHeight, blockStore, fastSync, ang.dataArchive)
 	mem := mempool.NewMempool(ang.logger, conf)
 	for _, p := range stateM.Plugins {
 		mem.RegisterFilter(NewMempoolFilter(p.CheckTx))
@@ -396,13 +415,19 @@ func (ang *Angine) P2PPort() uint16 {
 	return ang.p2pPort
 }
 
-func (ang *Angine) DialSeeds(seeds []string) {
-	ang.p2pSwitch.DialSeeds(ang.addrBook, seeds)
+func (ang *Angine) DialSeeds(seeds []string) error {
+	return ang.p2pSwitch.DialSeeds(ang.addrBook, seeds)
 }
 
-func (ang *Angine) Start() error {
+func (ang *Angine) Start() (err error) {
 	ang.mtx.Lock()
-	defer ang.mtx.Unlock()
+	defer func() {
+		ang.mtx.Unlock()
+		if e := recover(); e != nil {
+			err = errors.Errorf("%v", e)
+		}
+	}()
+
 	if ang.started {
 		return fmt.Errorf("can't start angine twice")
 	}
@@ -417,7 +442,7 @@ func (ang *Angine) Start() error {
 
 	seeds := ang.tune.Conf.GetString("seeds")
 	if seeds != "" {
-		ang.DialSeeds(strings.Split(seeds, ","))
+		return ang.DialSeeds(strings.Split(seeds, ","))
 	}
 
 	return nil
@@ -425,11 +450,14 @@ func (ang *Angine) Start() error {
 
 // Stop just wrap around swtich.Stop, which will stop reactors, listeners,etc
 func (ang *Angine) Stop() bool {
+	ret := ang.p2pSwitch.Stop()
+
 	ang.refuseList.Stop()
 	ang.statedb.Close()
 	ang.blockdb.Close()
 	ang.querydb.Close()
-	return ang.p2pSwitch.Stop()
+
+	return ret
 }
 
 func (ang *Angine) RegisterNodeInfo(ni *p2p.NodeInfo) {
@@ -444,15 +472,88 @@ func (ang *Angine) Height() int {
 	return ang.blockstore.Height()
 }
 
+func (ang *Angine) OriginHeight() int {
+	return ang.blockstore.OriginHeight()
+}
+
 func (ang *Angine) NonEmptyHeight() int {
 	return ang.stateMachine.LastNonEmptyHeight
 }
 
-func (ang *Angine) GetBlock(height int) (*types.Block, *types.BlockMeta) {
+func (ang *Angine) GetBlockMeta(height int) (meta *types.BlockMeta, err error) {
+
 	if height == 0 {
-		return nil, nil
+		err = fmt.Errorf("height must be greater than 0")
+		return
 	}
-	return ang.blockstore.LoadBlock(height), ang.blockstore.LoadBlockMeta(height)
+	if height > ang.Height() {
+		err = fmt.Errorf("height(%d) must be less than the current blockchain height(%d)", height, ang.Height())
+		return
+	}
+	if height > ang.blockstore.OriginHeight() {
+		meta = ang.blockstore.LoadBlockMeta(height)
+	} else {
+		archiveDB, errN := ang.newArchiveDB(height)
+		if errN != nil {
+			err = errN
+			return
+		}
+		defer archiveDB.Close()
+		newStore := blockchain.NewBlockStore(archiveDB, nil)
+		meta = newStore.LoadBlockMeta(height)
+	}
+	return
+}
+
+func (ang *Angine) GetBlock(height int) (block *types.Block, meta *types.BlockMeta, err error) {
+
+	if height == 0 {
+		err = fmt.Errorf("height must be greater than 0")
+		return
+	}
+	if height > ang.Height() {
+		err = fmt.Errorf("height(%d) must be less than the current blockchain height(%d)", height, ang.Height())
+		return
+	}
+	if height > ang.blockstore.OriginHeight() {
+		block = ang.blockstore.LoadBlock(height)
+		meta = ang.blockstore.LoadBlockMeta(height)
+	} else {
+		archiveDB, errN := ang.newArchiveDB(height)
+		if errN != nil {
+			err = errN
+			return
+		}
+		defer archiveDB.Close()
+		newStore := blockchain.NewBlockStore(archiveDB, nil)
+		block = newStore.LoadBlock(height)
+		meta = newStore.LoadBlockMeta(height)
+	}
+	return
+}
+
+func (ang *Angine) newArchiveDB(height int) (archiveDB dbm.DB, err error) {
+	fileHash := string(ang.dataArchive.QueryFileHash(height))
+	archiveDir := ang.conf.GetString("db_archive_dir")
+	tiClient := ti.NewTiCapsuleClient(
+		ang.conf.GetString("ti_endpoint"),
+		ang.conf.GetString("ti_key"),
+		ang.conf.GetString("ti_secret"),
+	)
+	_, err = os.Stat(filepath.Join(archiveDir, fileHash+".zip"))
+	if err != nil {
+		err = tiClient.DownloadFile(fileHash, filepath.Join(archiveDir, fileHash+".zip"))
+		if err != nil {
+			return
+		}
+		err = zip.Decompress(filepath.Join(archiveDir, fileHash+".zip"), filepath.Join(archiveDir, fileHash+".db"))
+		if err != nil {
+			return
+		}
+	}
+
+	archiveDB = dbm.NewDB(fileHash, ang.conf.GetString("db_backend"), archiveDir)
+	return
 }
 
 func (ang *Angine) GetNonEmptyBlockIterator() *blockchain.NonEmptyBlockIterator {
@@ -463,36 +564,27 @@ func (ang *Angine) BroadcastTx(tx []byte) error {
 	return ang.mempool.CheckTx(tx)
 }
 
-func (e *Angine) BroadcastTxCommit(tx []byte) (*types.ResultBroadcastTxCommit, error) {
-	if err := e.mempool.CheckTx(tx); err != nil {
-		return nil, err
+func (ang *Angine) BroadcastTxCommit(tx []byte) error {
+	if err := ang.mempool.CheckTx(tx); err != nil {
+		return err
 	}
 	committed := make(chan types.EventDataTx, 1)
 	eventString := types.EventStringTx(tx)
 	timer := time.NewTimer(60 * 2 * time.Second)
-	types.AddListenerForEvent(*e.eventSwitch, "angine", eventString, func(data types.TMEventData) {
+	types.AddListenerForEvent(*ang.eventSwitch, "angine", eventString, func(data types.TMEventData) {
 		committed <- data.(types.EventDataTx)
 	})
 	defer func() {
-		(*e.eventSwitch).(events.EventSwitch).RemoveListenerForEvent(eventString, "angine")
+		(*ang.eventSwitch).(events.EventSwitch).RemoveListenerForEvent(eventString, "angine")
 	}()
 	select {
-	case c := <-committed:
-		if c.Code == types.CodeType_OK {
-			return &types.ResultBroadcastTxCommit{
-				Code: c.Code,
-				Data: c.Data,
-				Log:  c.Log,
-			}, nil
+	case res := <-committed:
+		if res.Code == types.CodeType_OK {
+			return nil
 		}
-		res := new(types.Result).FromJSON(c.Error)
-		return &types.ResultBroadcastTxCommit{
-			Code: res.Code,
-			Data: res.Data,
-			Log:  res.Log,
-		}, nil
+		return fmt.Errorf(res.Error)
 	case <-timer.C:
-		return nil, fmt.Errorf("Timed out waiting for transaction to be included in a block")
+		return fmt.Errorf("Timed out waiting for transaction to be included in a block")
 	}
 }
 
@@ -546,9 +638,9 @@ func (ang *Angine) GetUnconfirmedTxs() []types.Tx {
 	return ang.mempool.Reap(-1)
 }
 
-func (e *Angine) IsNodeValidator(pub crypto.PubKey) bool {
+func (ang *Angine) IsNodeValidator(pub crypto.PubKey) bool {
 	edPub := pub.(crypto.PubKeyEd25519)
-	_, vals := e.consensus.GetValidators()
+	_, vals := ang.consensus.GetValidators()
 	for _, v := range vals {
 		if edPub.KeyString() == v.PubKey.KeyString() {
 			return true
@@ -606,12 +698,15 @@ func (ang *Angine) RecoverFromCrash(appHash []byte, appBlockHeight int) error {
 		} else if bytes.Equal(stateAppHash, lastBlockAppHash) {
 			// we crashed after commit and before saving state,
 			// so load the intermediate state and update the hash
-			ang.stateMachine.LoadIntermediate()
+			if err := ang.stateMachine.LoadIntermediate(); err != nil {
+				return err
+			}
 			ang.stateMachine.AppHash = appHash
 			ang.logger.Debug("RelpayBlocks: Loaded intermediate state and updated state.AppHash")
 		} else {
-			cmn.PanicSanity(cmn.Fmt("Unexpected state.AppHash: state.AppHash %X; app.AppHash %X, lastBlock.AppHash %X", stateAppHash, appHash, lastBlockAppHash))
+			return errors.Errorf("Unexpected state.AppHash: state.AppHash %X; app.AppHash %X, lastBlock.AppHash %X", stateAppHash, appHash, lastBlockAppHash)
 		}
+
 		return nil
 	} else if storeBlockHeight == appBlockHeight+1 &&
 		storeBlockHeight == stateBlockHeight+1 {
@@ -638,7 +733,7 @@ func (ang *Angine) RecoverFromCrash(appHash []byte, appBlockHeight int) error {
 			ang.stateMachine.LastBlockID = ang.blockstore.LoadBlockMeta(storeBlockHeight).Header.LastBlockID
 			ang.stateMachine.LastBlockTime = ang.blockstore.LoadBlockMeta(storeBlockHeight).Header.Time
 		} else {
-			cmn.PanicSanity(cmn.Fmt("Expected storeHeight (%d) and stateHeight (%d) to match.", storeBlockHeight, stateBlockHeight))
+			return errors.Errorf("Expected storeHeight (%d) and stateHeight (%d) to match.", storeBlockHeight, stateBlockHeight)
 		}
 	} else {
 		// store is more than one ahead,
@@ -650,13 +745,15 @@ func (ang *Angine) RecoverFromCrash(appHash []byte, appBlockHeight int) error {
 			// h.nBlocks++
 			block := ang.blockstore.LoadBlock(h)
 			blockMeta := ang.blockstore.LoadBlockMeta(h)
-			ang.stateMachine.ApplyBlock(*ang.eventSwitch, block, blockMeta.PartsHeader, MockMempool{}, 0)
+			if err := ang.stateMachine.ApplyBlock(*ang.eventSwitch, block, blockMeta.PartsHeader, MockMempool{}, 0); err != nil {
+				return errors.Wrap(err, "fail to apply block during recovery")
+			}
 		}
 		if !bytes.Equal(ang.stateMachine.AppHash, appHash) {
 			return fmt.Errorf("Ann state.AppHash does not match AppHash after replay. Got %X, expected %X", appHash, ang.stateMachine.AppHash)
 		}
-		return nil
 	}
+
 	return nil
 }
 
@@ -759,7 +856,7 @@ func getGenesisFile(conf *viper.Viper) (*types.GenesisDoc, error) {
 	}
 	jsonBlob, err := ioutil.ReadFile(genDocFile)
 	if err != nil {
-		cmn.Exit(cmn.Fmt("Couldn't read GenesisDoc file: %v", err))
+		return nil, fmt.Errorf("Couldn't read GenesisDoc file: %v", err)
 	}
 	genDoc := types.GenesisDocFromJSON(jsonBlob)
 	if genDoc.ChainID == "" {
@@ -792,9 +889,12 @@ func genPrivFile(path string) *types.PrivValidator {
 	return privValidator
 }
 
-func genGenesiFile(path string, gVals []types.GenesisValidator) (*types.GenesisDoc, error) {
+func genGenesiFile(path, chainID string, gVals []types.GenesisValidator) (*types.GenesisDoc, error) {
+	if len(chainID) == 0 {
+		chainID = cmn.Fmt("annchain-%v", cmn.RandStr(6))
+	}
 	genDoc := &types.GenesisDoc{
-		ChainID: cmn.Fmt("annchain-%v", cmn.RandStr(6)),
+		ChainID: chainID,
 		Plugins: "specialop",
 	}
 	genDoc.Validators = gVals

@@ -18,16 +18,25 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io/ioutil"
+	"math"
+	"os"
+	"path/filepath"
 	"reflect"
+	"strconv"
 	"time"
 
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
 
+	"github.com/annchain/angine/blockchain/archive"
 	"github.com/annchain/angine/types"
+	"github.com/annchain/angine/utils/zip"
 	. "github.com/annchain/ann-module/lib/go-common"
+	"github.com/annchain/ann-module/lib/go-db"
 	"github.com/annchain/ann-module/lib/go-p2p"
 	"github.com/annchain/ann-module/lib/go-wire"
+	"github.com/annchain/go-sdk/ti"
 )
 
 const (
@@ -48,12 +57,15 @@ const (
 	maxBlockchainResponseSize = types.MaxBlockSize + 2
 )
 
+var ErrNotFound = errors.New("leveldb not found")
+
 // BlockchainReactor handles long-term catchup syncing.
 type BlockchainReactor struct {
 	p2p.BaseReactor
 
 	config     *viper.Viper
 	store      *BlockStore
+	archive    *archive.Archive
 	pool       *BlockPool
 	fastSync   bool
 	requestsCh chan BlockRequest
@@ -68,7 +80,8 @@ type BlockchainReactor struct {
 	logger *zap.Logger
 }
 
-func NewBlockchainReactor(logger *zap.Logger, config *viper.Viper, lastBlockHeight int, store *BlockStore, fastSync bool) *BlockchainReactor {
+func NewBlockchainReactor(logger *zap.Logger, config *viper.Viper, lastBlockHeight int, store *BlockStore, fastSync bool, arch *archive.Archive) *BlockchainReactor {
+
 	if lastBlockHeight == store.Height()-1 {
 		store.height -= 1 // XXX HACK, make this better
 	}
@@ -90,8 +103,8 @@ func NewBlockchainReactor(logger *zap.Logger, config *viper.Viper, lastBlockHeig
 		fastSync:   fastSync,
 		requestsCh: requestsCh,
 		timeoutsCh: timeoutsCh,
-
-		logger: logger,
+		archive:    arch,
+		logger:     logger,
 	}
 	bcR.BaseReactor = *p2p.NewBaseReactor(logger, "BlockchainReactor", bcR)
 	return bcR
@@ -106,7 +119,14 @@ func (bcR *BlockchainReactor) SetBlockExecuter(x func(*types.Block, *types.PartS
 }
 
 func (bcR *BlockchainReactor) OnStart() error {
+
 	bcR.BaseReactor.OnStart()
+	if bcR.archive.Threshold > 0 && bcR.archive.Threshold < int(math.MaxInt64/int64(time.Second)) {
+		go bcR.BlockArchive()
+	} else {
+		bcR.logger.Warn("invalid archive.Threshold", zap.Int("archive_threshold", bcR.archive.Threshold))
+	}
+
 	if bcR.fastSync {
 		_, err := bcR.pool.Start()
 		if err != nil {
@@ -158,7 +178,16 @@ func (bcR *BlockchainReactor) Receive(chID byte, src *p2p.Peer, msgBytes []byte)
 	switch msg := msg.(type) {
 	case *bcBlockRequestMessage:
 		// Got a request for a block. Respond with block if we have it.
-		block := bcR.store.LoadBlock(msg.Height)
+		var block *types.Block
+		height := msg.Height
+		if height > bcR.store.OriginHeight() {
+			block = bcR.store.LoadBlock(msg.Height)
+		} else {
+			block, err = bcR.loadArchiveBlock(msg.Height)
+			if err != nil {
+				bcR.logger.Error(" bcR.loadArchiveBlock failed", zap.String("error", err.Error()))
+			}
+		}
 		if block != nil {
 			msg := &bcBlockResponseMessage{Block: block}
 			queued := src.TrySend(BlockchainChannel, struct{ BlockchainMessage }{msg})
@@ -183,6 +212,35 @@ func (bcR *BlockchainReactor) Receive(chID byte, src *p2p.Peer, msgBytes []byte)
 	default:
 		bcR.logger.Warn(Fmt("Unknown message type %v", reflect.TypeOf(msg)))
 	}
+}
+
+func (bcR *BlockchainReactor) loadArchiveBlock(height int) (block *types.Block, err error) {
+
+	fileHash := string(bcR.archive.QueryFileHash(height))
+	archiveDir := bcR.config.GetString("db_archive_dir")
+	tiClient := ti.NewTiCapsuleClient(
+		bcR.config.GetString("ti_endpoint"),
+		bcR.config.GetString("ti_key"),
+		bcR.config.GetString("ti_secret"),
+	)
+	_, err = os.Stat(filepath.Join(archiveDir, fileHash+".zip"))
+	if err != nil {
+		err = tiClient.DownloadFile(fileHash, filepath.Join(archiveDir, fileHash+".zip"))
+		if err != nil {
+			return
+		} else {
+			err = zip.Decompress(filepath.Join(archiveDir, fileHash+".zip"), filepath.Join(archiveDir, fileHash+".db"))
+			if err != nil {
+				return
+			}
+		}
+	}
+
+	archiveDB := db.NewDB(fileHash, bcR.config.GetString("db_backend"), archiveDir)
+	defer archiveDB.Close()
+	newStore := NewBlockStore(archiveDB, nil)
+	block = newStore.LoadBlock(height)
+	return
 }
 
 // Handle messages from the poolReactor telling the reactor what to do.
@@ -261,6 +319,71 @@ FOR_LOOP:
 		case <-bcR.Quit:
 			break FOR_LOOP
 		}
+	}
+}
+
+func (bcR *BlockchainReactor) BlockArchive() {
+	// geneate next block time > 1s
+	//originHeight = (actual originHeight) -1
+	clearDBTicker := time.NewTicker(time.Duration(bcR.archive.Threshold) * time.Second)
+	archiveDir := bcR.config.GetString("db_archive_dir")
+	for range clearDBTicker.C {
+		fs, err := ioutil.ReadDir(archiveDir)
+		if err != nil {
+			bcR.logger.Error("ioutil.ReadDir failed", zap.String("error", err.Error()))
+			continue
+		}
+		for _, file := range fs {
+			if file.IsDir() {
+				if file.Name() != "blockstore.db" {
+					os.RemoveAll(filepath.Join(archiveDir, file.Name()))
+				}
+			} else {
+				if file.Name() != "blockstore.db.zip" {
+					os.Remove(filepath.Join(archiveDir, file.Name()))
+				}
+			}
+		}
+		originHeight := bcR.store.OriginHeight()
+		if bcR.store.Height()-originHeight > bcR.archive.Threshold {
+			for i := originHeight + 1; i <= originHeight+bcR.archive.Threshold; i++ {
+				block := bcR.store.LoadBlock(i)
+				partSet := block.MakePartSet(bcR.config.GetInt("block_part_size"))
+				seenCommit := bcR.store.LoadSeenCommit(i)
+				bcR.store.SaveBlockToArchive(i, block, partSet, seenCommit)
+			}
+			storeDir := filepath.Join(archiveDir, "blockstore.db")
+			err := zip.CompressDir(storeDir)
+			if err != nil {
+				bcR.logger.Error("zip.CompressDir failed", zap.String("error", err.Error()))
+				os.Remove(storeDir + ".zip")
+				continue
+			}
+			tiClient := ti.NewTiCapsuleClient(
+				bcR.config.GetString("ti_endpoint"),
+				bcR.config.GetString("ti_key"),
+				bcR.config.GetString("ti_secret"),
+			)
+
+			result, err := tiClient.Save(storeDir + ".zip")
+			if err != nil {
+				bcR.logger.Warn("tiClient.Save failed", zap.String("error", err.Error()))
+				os.Remove(storeDir + ".zip")
+				continue
+			} else {
+				bcR.logger.Info("tiClient.Save success")
+			}
+			key := strconv.Itoa(originHeight+1) + "_" + strconv.Itoa(originHeight+bcR.archive.Threshold)
+			bcR.archive.AddItem(key, result.Hash)
+			bcR.store.SetOriginHeight(originHeight + bcR.archive.Threshold)
+			for i := originHeight + 1; i <= bcR.store.OriginHeight(); i++ {
+				err = bcR.store.DeleteBlock(i)
+				if err != nil {
+					bcR.logger.Error("bcR.store.DeleteBlock("+strconv.Itoa(i)+")", zap.String("error", err.Error()))
+				}
+			}
+		}
+
 	}
 }
 

@@ -12,29 +12,33 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package types
+package archive
 
 import (
-	"encoding/json"
-	"time"
+	"strconv"
+
+	dbm "github.com/annchain/ann-module/lib/go-db"
 )
 
-const (
-	// angine takes query id from 0x01 to 0x2F
-	QueryTxExecution = 0x01
-)
-
-type TxExecutionResult struct {
-	Height        int       `json:"height"`
-	BlockHash     []byte    `json:"blockhash"`
-	BlockTime     time.Time `json:"blocktime"`
-	ValidatorHash []byte    `json:"validatorhash"`
+type Archive struct {
+	db        dbm.DB
+	Threshold int
 }
 
-func (i *TxExecutionResult) ToBytes() ([]byte, error) {
-	return json.Marshal(i)
+var dbName = "archive"
+
+func NewArchive(dbBackend, dbDir string, threshold int) *Archive {
+	archiveDB := dbm.NewDB(dbName, dbBackend, dbDir)
+	return &Archive{archiveDB, threshold}
 }
 
-func (i *TxExecutionResult) FromBytes(bytes []byte) error {
-	return json.Unmarshal(bytes, i)
+func (ar *Archive) QueryFileHash(height int) (ret []byte) {
+	origin := (height-1)/ar.Threshold*ar.Threshold + 1
+	key := strconv.Itoa(origin) + "_" + strconv.Itoa(origin-1+ar.Threshold)
+	ret = ar.db.Get([]byte(key))
+	return
+}
+
+func (ar *Archive) AddItem(key, value string) {
+	ar.db.SetSync([]byte(key), []byte(value))
 }

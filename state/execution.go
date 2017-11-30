@@ -95,7 +95,7 @@ func (s *State) execBlockOnApp(eventSwitch types.EventSwitch, block *types.Block
 			Code: types.CodeType_OK,
 		}
 		types.FireEventTx(eventCache, txev)
-		batch.Set(tx, queryBlockInfo)
+		batch.Set(types.Tx(tx).Hash(), queryBlockInfo)
 	}
 	batch.Write()
 

@@ -26,9 +26,6 @@ const (
 	CodeType_InsufficientFunds CodeType = 5
 	CodeType_UnknownRequest    CodeType = 6
 	CodeType_InvalidTx         CodeType = 7
-	CodeType_NotFound          CodeType = 8
-	CodeType_InvalidInput      CodeType = 9
-
 	// Reserved for basecoin, 100 ~ 199
 	CodeType_BaseDuplicateAddress     CodeType = 101
 	CodeType_BaseEncodingError        CodeType = 102
@@ -56,6 +53,8 @@ const (
 	CodeType_GovInvalidMember      CodeType = 208
 	CodeType_GovInvalidVote        CodeType = 209
 	CodeType_GovInvalidVotingPower CodeType = 210
+
+	CodeType_RevokeRPCError CodeType = 301
 )
 
 var CodeType_name = map[int32]string{

@@ -22,7 +22,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/annchain/angine/refuse_list"
+	"github.com/annchain/angine/blockchain/refuse_list"
 	"github.com/annchain/angine/types"
 	"github.com/annchain/ann-module/lib/ed25519"
 	"github.com/annchain/ann-module/lib/go-crypto"

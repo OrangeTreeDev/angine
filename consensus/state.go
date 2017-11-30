@@ -1265,7 +1265,7 @@ func (cs *ConsensusState) tryFinalizeCommit(height int) {
 // Increment height and goto RoundStepNewHeight
 func (cs *ConsensusState) finalizeCommit(height int) {
 	if cs.Height != height || cs.Step != RoundStepCommit {
-		cs.slogger.Warn("finalizeCommit(%v): Invalid args. Current step: %v/%v/%v", height, cs.Height, cs.Round, cs.Step)
+		cs.slogger.Debugf("finalizeCommit(%v): Invalid args. Current step: %v/%v/%v", height, cs.Height, cs.Round, cs.Step)
 		return
 	}
 	// logger.Info("ann-stopwatch consensusTime elapsed ", cs.RoundState.CommitTime.Sub(cs.RoundState.StartTime).String())
@@ -1438,7 +1438,7 @@ func (cs *ConsensusState) tryAddVote(vote *types.Vote, peerKey string) error {
 //-----------------------------------------------------------------------------
 
 func (cs *ConsensusState) addVote(vote *types.Vote, peerKey string) (added bool, err error) {
-	cs.logger.Debug("addVote", zap.Int("voteHeight", vote.Height), zap.Binary("voteType", []byte{vote.Type}), zap.Int("csHeight", cs.Height))
+	//cs.logger.Debug("addVote", zap.Int("voteHeight", vote.Height), zap.Binary("voteType", []byte{vote.Type}), zap.Int("csHeight", cs.Height))
 
 	// A precommit for the previous height?
 	// These come in while we wait timeoutCommit
@@ -1474,7 +1474,7 @@ func (cs *ConsensusState) addVote(vote *types.Vote, peerKey string) (added bool,
 			switch vote.Type {
 			case types.VoteTypePrevote:
 				prevotes := cs.Votes.Prevotes(vote.Round)
-				//cs.slogger.Debugw("Added to prevote", "vote", vote, "prevotes", prevotes.StringShort())
+				cs.slogger.Debugw("Added to prevote", "vote", vote, "prevotes", prevotes.StringShort())
 				// First, unlock if prevotes is a valid POL.
 				// >> lockRound < POLRound <= unlockOrChangeLockRound (see spec)
 				// NOTE: If (lockRound < POLRound) but !(POLRound <= unlockOrChangeLockRound),
@@ -1507,7 +1507,7 @@ func (cs *ConsensusState) addVote(vote *types.Vote, peerKey string) (added bool,
 				}
 			case types.VoteTypePrecommit:
 				precommits := cs.Votes.Precommits(vote.Round)
-				cs.slogger.Debugw("Added to precommit", "vote", vote, "precommits", precommits.StringShort())
+				//cs.slogger.Debugw("Added to precommit", "vote", vote, "precommits", precommits.StringShort())
 				blockID, ok := precommits.TwoThirdsMajority()
 				if ok {
 					if len(blockID.Hash) == 0 {

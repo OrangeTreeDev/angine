@@ -32,7 +32,8 @@ const (
 	// DEFAULT_RUNTIME defines the default path for runtime path relative to $HOME
 	DEFAULT_RUNTIME = ".angine"
 	// DATADIR is the data dir in the runtime, basically you don't change this never
-	DATADIR = "data"
+	DATADIR    = "data"
+	ARCHIVEDIR = "archive"
 	// CONFIGFILE is the name of the configuration file name in the runtime path for angine
 	CONFIGFILE = "config.toml"
 )
@@ -83,8 +84,6 @@ func GetConfig(root string) (conf *viper.Viper) {
 	if err = conf.ReadInConfig(); err != nil {
 		cmn.Exit(errors.Wrap(err, "angine configuration").Error())
 	}
-
-	// Set defaults or panic
 	if conf.IsSet("chain_id") {
 		cmn.Exit("Cannot set 'chain_id' via config.toml")
 	}
@@ -115,12 +114,13 @@ func SetDefaults(runtime string, conf *viper.Viper) *viper.Viper {
 	conf.SetDefault("priv_validator_file", path.Join(runtime, "priv_validator.json"))
 	conf.SetDefault("db_backend", "leveldb")
 	conf.SetDefault("db_dir", path.Join(runtime, DATADIR))
+	conf.SetDefault("db_archive_dir", path.Join(runtime, ARCHIVEDIR))
 	conf.SetDefault("revision_file", path.Join(runtime, "revision"))
 	conf.SetDefault("filter_peers", false)
 
 	conf.SetDefault("signbyCA", "") // auth signature from CA
 	conf.SetDefault("log_path", "")
-
+	conf.SetDefault("threshold_blocks", 900)
 	setMempoolDefaults(conf)
 	setConsensusDefaults(conf)
 

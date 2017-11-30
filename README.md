@@ -1,203 +1,262 @@
-[![API Reference](https://godoc.org/github.com/annchain/angine?status.svg)](https://godoc.org/github.com/annchain/angine)
-[![license](https://img.shields.io/github/license/annchain/angine.svg)](https://github.com/annchain/angine/blob/master/LICENSE)
-[![](https://tokei.rs/b1/github/annchain/angine?category=lines)](https://github.com/annchain/angine)
-
-
-Branch    | Buid Status | Coverage | Report Card
-----------|-------|----------|-------------
-master    | [![Build Status](https://travis-ci.org/annchain/angine.svg?branch=master)](https://travis-ci.org/annchain/angine)| [![master](http://codecov.io/gh/annchain/angine/branch/master/graph/badge.svg)](https://codecov.io/gh/annchain/angine) | [![Go Report Card](http://goreportcard.com/badge/github.com/annchain/angine/tree/master)](https://goreportcard.com/report/github.com/annchain/angine/tree/master)
-<div id="table-of-contents">
-<h2>Table of Contents</h2>
-<div id="text-table-of-contents">
-<ul>
-<li><a href="#orgbe773ea">1. What is angine?</a></li>
-<li><a href="#orgf0f2108">2. Structure of Angine</a></li>
-<li><a href="#org3958c62">3. What we have fulfilled</a></li>
-<li><a href="#org5e86273">4. How to use</a>
-<ul>
-<li><a href="#org9a260de">4.1. Initialize Angine</a>
-<ul>
-<li><a href="#org19c7657">4.1.1. Construct an Tunes.</a></li>
-</ul>
-</li>
-<li><a href="#orgf101d9a">4.2. New an Angine instance and start it</a></li>
-</ul>
-</li>
-</ul>
-</div>
-</div>
-
-<a id="orgbe773ea"></a>
-
 # What is angine?
 
 Angine is a completely self-contained blockchain consensus engine. 
-At the core, we use Tendermint BFT, which is an implementation of a Byzantine Fault Tolerant PoS consensus algorithm. So thank you Tendermint team.
-We just wrapped those many things that Tendermint already offered together under a new concept, "Angine". 
+At the core, we use Tendermint BFT. It is an implementation of a Byzantine Fault Tolerant PoS consensus algorithm. So thank you Tendermint team.
+We just wrap those many things that tendermint already offered together under a concept, "Angine". 
 
 
-<a id="orgf0f2108"></a>
 
 # Structure of Angine
 
-    ├── blockchain
-    │   ├── pool.go
-    │   ├── pool_test.go
-    │   ├── reactor.go
-    │   └── store.go
-    ├── config
-    │   ├── config.go
-    │   └── templates.go
-    ├── consensus
-    │   ├── byzantine_test.go
-    │   ├── common.go
-    │   ├── common_test.go
-    │   ├── height_vote_set.go
-    │   ├── height_vote_set_test.go
-    │   ├── mempool_test.go
-    │   ├── reactor.go
-    │   ├── reactor_test.go
-    │   ├── README.md
-    │   ├── replay.go
-    │   ├── replay_test.go
-    │   ├── state.go
-    │   ├── state_test.go
-    │   ├── test_data
-    │   │   ├── build.sh
-    │   │   ├── empty_block.cswal
-    │   │   ├── README.md
-    │   │   ├── small_block1.cswal
-    │   │   └── small_block2.cswal
-    │   ├── ticker.go
-    │   ├── version.go
-    │   └── wal.go
-    ├── angine.go
-    ├── log.go
-    ├── mempool
-    │   ├── mempool.go
-    │   ├── mempool_test.go
-    │   └── reactor.go
-    ├── plugin
-    │   ├── init.go
-    │   └── specialop.go
-    ├── README.org
-    ├── refuse_list
-    │   ├── refuse_list.go
-    │   └── refuse_list_test.go
-    ├── specialop.go
-    ├── state
-    │   ├── errors.go
-    │   ├── execution.go
-    │   ├── execution_test.go
-    │   ├── plugin.go
-    │   ├── state.go
-    │   └── state_test.go
-    └── types
-        ├── application.go
-        ├── block.go
-        ├── block_meta.go
-        ├── canonical_json.go
-        ├── common.go
-        ├── events.go
-        ├── genesis.go
-        ├── hooks.go
-        ├── keys.go
-        ├── mempool.go
-        ├── part_set.go
-        ├── part_set_test.go
-        ├── priv_validator.go
-        ├── proposal.go
-        ├── proposal_test.go
-        ├── resultcode.go
-        ├── result.go
-        ├── rpc.go
-        ├── signable.go
-        ├── specialOP.go
-        ├── tx.go
-        ├── validator.go
-        ├── validator_set.go
-        ├── validator_set_test.go
-        ├── vote.go
-        ├── vote_set.go
-        ├── vote_set_test.go
-        └── vote_test.go
+```shell
+├── angine.go
+├── blockchain
+│   ├── pool.go
+│   ├── pool_test.go
+│   ├── reactor.go
+│   └── store.go
+├── config
+│   ├── config.go
+│   └── templates.go
+├── consensus
+│   ├── byzantine_test.go
+│   ├── common.go
+│   ├── common_test.go
+│   ├── height_vote_set.go
+│   ├── height_vote_set_test.go
+│   ├── mempool_test.go
+│   ├── reactor.go
+│   ├── reactor_test.go
+│   ├── README.md
+│   ├── replay.go
+│   ├── replay_test.go
+│   ├── state.go
+│   ├── state_test.go
+│   ├── test_data
+│   │   ├── build.sh
+│   │   ├── empty_block.cswal
+│   │   ├── README.md
+│   │   ├── small_block1.cswal
+│   │   └── small_block2.cswal
+│   ├── ticker.go
+│   ├── version.go
+│   └── wal.go
+├── LICENSE
+├── log.go
+├── mempool
+│   ├── mempool.go
+│   ├── mempool_test.go
+│   └── reactor.go
+├── plugin
+│   ├── init.go
+│   └── specialop.go
+├── README.md
+├── refuse_list
+│   ├── refuse_list.go
+│   └── refuse_list_test.go
+├── specialop.go
+├── state
+│   ├── errors.go
+│   ├── execution.go
+│   ├── execution_test.go
+│   ├── plugin.go
+│   ├── state.go
+│   ├── state_test.go
+│   ├── tps.go
+│   └── tps_test.go
+├── trace
+│   ├── reactor.go
+│   └── router.go
+└── types
+    ├── application.go
+    ├── block.go
+    ├── block_meta.go
+    ├── canonical_json.go
+    ├── common.go
+    ├── core.go
+    ├── events.go
+    ├── genesis.go
+    ├── hooks.go
+    ├── keys.go
+    ├── mempool.go
+    ├── part_set.go
+    ├── part_set_test.go
+    ├── priv_validator.go
+    ├── proposal.go
+    ├── proposal_test.go
+    ├── query.go
+    ├── resultcode.go
+    ├── result.go
+    ├── rpc.go
+    ├── signable.go
+    ├── specialOP.go
+    ├── tx.go
+    ├── validator.go
+    ├── validator_set.go
+    ├── validator_set_test.go
+    ├── vote.go
+    ├── vote_set.go
+    ├── vote_set_test.go
+    └── vote_test.go
+```
 
-From the directory structure of Angine above, you can see that we have packed every module under its own directory. This gives you a clear view of the parts that make up an Angine.
+This is directory structure of Angine, you can see that we have packed every module under its own directory. This give you a clear view of the parts making up an Angine.
 
 1.  state/ is the running state of the Angine, which is driven by blockchain/, mempool/ and consensus/
-
-2.  blockchain/ takes charge of syncing blocks, loading blocks, persisting blocks and anything that is physically related to "block"
-
+2.  blockchain/ takes charge of syncing blocks, loading blocks, persisting blocks and anything that physically related to "block"
 3.  mempool/ takes charge of buffering effective transactions and reaching an agreement about the order of transactions
+4.  consensus/ takes charge of gossipping between peers, consensus algorithm related data stream
+5.  trace/ is just another reactor module used for specialop votes currently
 
-4.  consensus/ takes charge of gossipping between peers, and consensus algorithms on data stream
 
 
-<a id="org3958c62"></a>
 
 # What we have fulfilled
 
-1.  CA based on asymmetric cyrpto
+1.  configurable CA based on asymmetric cyrpto
 
 2.  Dynamically changing ValidatorSet of ConsensusState
 
-3.  Two kinds of transactions, namely normal and special, are totally isolated. Special tx will only be processed by plugins by default
+3.  Two kinds of transactions, normal and special, are totally isolated. Special tx will only be processed by plugins by default.
 
 4.  Angine plugins
 
-5.  Newly joined nodes will automatically download genesisfiles from the first seed listed in config file
+5.  Node joining will automatically download genesisfile from the first seed listed in config file
 
 
-<a id="org5e86273"></a>
+
 
 # How to use
 
+### Configuration
 
-<a id="org9a260de"></a>
+For angine, every thing angine needs is located at a universal directory, named "angine_runtime". By default, the directory sits at `$HOME/.angine`. And we also provide an environment variable to override the default: `ANGINE_RUNTIME`.
 
-## Initialize Angine
+The auto generated runtime looks like this:
+
+```shell
+├── config.toml
+├── data
+├── genesis.json
+└── priv_validator.json
+```
+
+* config.toml contains all your custom configs for Angine
+* data contains all the data generated when Angine starts running
+* genesis.json defines genesis state of your blockchain
+* priv_validator.json contains your node's private/public key pair
+
+Let me just show you a simplified config.toml:
+
+```toml
+# This is a TOML config file.
+# For more information, see https://github.com/toml-lang/toml
+
+environment = "development"
+db_backend = "leveldb"
+moniker = "anonymous"
+p2p_laddr = "tcp://0.0.0.0:46656"
+seeds = ""
+
+# auth by ca general switch
+auth_by_ca = true
+
+# whether non-validator nodes need auth by ca, only effective when auth_by_ca is true
+non_validator_auth_by_ca = true
+
+# auth signature from CA
+signbyCA = ""
+
+fast_sync = true
+
+skip_upnp = true
+
+log_path = ""
+
+#log_level:
+        # -1 DebugLevel logs are typically voluminous, and are usually disabled in production.
+        #  0 InfoLevel is the default logging priority.
+        #  1 WarnLevel logs are more important than Info, but don't need individual human review.
+        #  2 ErrorLevel logs are high-priority. If an application is running smoothly, it shouldn't generate any error-level logs.
+        #  3 DPanicLevel logs are particularly important errors. In development the logger panics after writing the message.
+        #  4 PanicLevel logs a message, then panics.
+        #  5 FatalLevel logs a message, then calls os.Exit(1)
+```
+
+
+
+### Default CA signature
+
+Suppose you want to join a chain with a public key "123456" and its chainID is "abc". The patten is like $publickey$$chainID$:
+
+```shell
+123456abc
+```
+
+This message above is what you should give the CA node of that chain and expect a corresponding signature which means an authorized identity to join.
+
+Further more, a blockchain can choose to use 3 different auth strategies: 
+
+* auth by default 
+* only validators need auth
+* no auth at all 
+
+### Initialize Angine
 
 This is how you initialize an angine. 
 
-    angine.Initialize(&angine.Tunes{Conf: conf})
+```go
+angine.Initialize(&angine.Tunes{Conf: conf})
+```
 
-The "angine.Initialize" will handle the generation of default configs, genesis file and private key. You should never perform this more than once for a particular chain, otherwise your chain id will be different for sure.
+The "angine.Initialize" will handle the generation of default configs, genesis file and private key. You must only do this once for a particular chain, otherwise, your chain id will be different for sure.
 
+### Construct a Tunes.
 
-<a id="org19c7657"></a>
-
-### Construct a Tunes
-
-    type Tunes struct {
-        Runtime string
-        Conf    *cfg.MapConfig
-    }
+```go
+type Tunes struct {
+    Runtime string
+    Conf    *viper.Viper
+}
+```
 
 This struct contains 2 fields and you only have to fill one:
 
-1.  Runtime is a path that contains all the auto-generated files. So providing this will just generate everything under this path with a random chainID and a private/pub key pair.
+1.  Runtime is a path that contains all the auto-generated files. So provided this will just generate everything under this path with random chainID and private/pub key pair.
 
-2.  Conf contains any configs that you wish to override the defaults. For instance, if you want to use some cli args to override the default configs, this is where you should look into.
+2.  Conf contains any config that you want to override the defaults. Say, you wanna use some cli args to override the default configs, this is the thing you should look into.
 
-    And then, you will probably need to edit those files mannually to get exactly what you want. Everything in the files are pretty straightforward.
+    After, you probably need to edit those files mannually to get exactly what you want. Everything in the files are straigt forward.
 
 
-<a id="orgf101d9a"></a>
+### New an Angine instance and start it
 
-## New an Angine instance and start it
+First, you need to import angine into your project :-) then, 
 
-As the first step, you will need to import angine into your project. :-) 
+```go
+// this line should be changed to github path accordingly
+import "github.com/annchain/angine" 
 
-    // this line should be changed to github path accordingly
-    import "github.com/annchain/angine" 
+...
 
-    ...
+mainAngine := angine.NewAngine(&angine.Tunes{Conf: conf})
 
-    mainAngine := angine.NewAngine(&angine.Tunes{Conf: conf})
+...
 
-    ...
+mainAngine.Start()
+```
 
-    mainAngine.Start()
+That is all.
 
-That is all. Have fun! 
+### Manage Validator Set
+
+Angine is designed to be capable of chaning validators dynamically. 
+
+First of all, all new connected nodes are by default non-validator. If the node wants to become a validator, a change_validator command is required. In angine world, such a command is called special operation and change_validator must come from CA node.
+
+Suppose you are a CA node, use the following command to initiate a special operation to change a normal node into a validator:
+
+```shell
+anntool --backend=${CA's RPC address} --target="${chainid}" special change_validator --privkey="${CA's privatekey}" --power=${voting power} --isCA="{false/true}" --validator_pubkey="${the node's publickey}"
+```
 

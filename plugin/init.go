@@ -15,7 +15,7 @@
 package plugin
 
 import (
-	"github.com/annchain/angine/refuse_list"
+	"github.com/annchain/angine/blockchain/refuse_list"
 	"github.com/annchain/angine/types"
 	"github.com/annchain/ann-module/lib/go-crypto"
 	"github.com/annchain/ann-module/lib/go-p2p"

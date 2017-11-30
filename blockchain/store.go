@@ -42,17 +42,21 @@ the Commit data outside the Block.
 Panics indicate probable corruption in the data
 */
 type BlockStore struct {
-	db dbm.DB
+	db        dbm.DB
+	archiveDB dbm.DB
 
-	mtx    sync.RWMutex
-	height int
+	mtx          sync.RWMutex
+	height       int
+	originHeight int
 }
 
-func NewBlockStore(db dbm.DB) *BlockStore {
+func NewBlockStore(db, archiveDB dbm.DB) *BlockStore {
 	bsjson := LoadBlockStoreStateJSON(db)
 	return &BlockStore{
-		height: bsjson.Height,
-		db:     db,
+		height:       bsjson.Height,
+		originHeight: bsjson.OriginHeight,
+		db:           db,
+		archiveDB:    archiveDB,
 	}
 }
 
@@ -63,8 +67,24 @@ func (bs *BlockStore) Height() int {
 	return bs.height
 }
 
+func (bs *BlockStore) OriginHeight() int {
+	return bs.originHeight //unnecessary use mtx
+}
+
+func (bs *BlockStore) SetOriginHeight(height int) {
+	bs.originHeight = height
+}
+
 func (bs *BlockStore) GetReader(key []byte) io.Reader {
 	bytez := bs.db.Get(key)
+	if bytez == nil {
+		return nil
+	}
+	return bytes.NewReader(bytez)
+}
+
+func (bs *BlockStore) GetReaderFromArchive(key []byte) io.Reader {
+	bytez := bs.archiveDB.Get(key)
 	if bytez == nil {
 		return nil
 	}
@@ -187,7 +207,7 @@ func (bs *BlockStore) SaveBlock(block *types.Block, blockParts *types.PartSet, s
 	bs.db.Set(calcSeenCommitKey(height), seenCommitBytes)
 
 	// Save new BlockStoreStateJSON descriptor
-	BlockStoreStateJSON{Height: height}.Save(bs.db)
+	BlockStoreStateJSON{Height: height, OriginHeight: bs.originHeight}.Save(bs.db)
 
 	// Done!
 	bs.mtx.Lock()
@@ -198,12 +218,84 @@ func (bs *BlockStore) SaveBlock(block *types.Block, blockParts *types.PartSet, s
 	bs.db.SetSync(nil, nil)
 }
 
+func (bs *BlockStore) SaveBlockToArchive(height int, block *types.Block, blockParts *types.PartSet, seenCommit *types.Commit) {
+	if !blockParts.IsComplete() {
+		PanicSanity(Fmt("BlockStore can only save complete block part sets"))
+	}
+	// Save block meta
+	meta := types.NewBlockMeta(block, blockParts)
+	metaBytes := wire.BinaryBytes(meta)
+	bs.archiveDB.Set(calcBlockMetaKey(height), metaBytes)
+
+	// Save block parts
+	for i := 0; i < blockParts.Total(); i++ {
+		bs.savePartToArchive(height, i, blockParts.GetPart(i))
+	}
+
+	// Save block commit (duplicate and separate from the Block)
+	blockCommitBytes := wire.BinaryBytes(block.LastCommit)
+	bs.archiveDB.Set(calcBlockCommitKey(height-1), blockCommitBytes)
+
+	// Save seen commit (seen +2/3 precommits for block)
+	// NOTE: we can delete this at a later height
+	seenCommitBytes := wire.BinaryBytes(seenCommit)
+	bs.archiveDB.Set(calcSeenCommitKey(height), seenCommitBytes)
+}
+
+func (bs *BlockStore) DeleteBlock(height int) (err error) {
+
+	bytez := bs.db.Get(calcBlockCommitKey(height))
+	if bytez == nil {
+		err = ErrNotFound
+		return
+	}
+	bs.db.Delete(calcBlockCommitKey(height - 1))
+	bs.db.Delete(calcSeenCommitKey(height))
+	var n int
+	r := bs.GetReader(calcBlockMetaKey(height))
+	if r == nil {
+		return nil
+	}
+	meta := wire.ReadBinary(&types.BlockMeta{}, r, 0, &n, &err).(*types.BlockMeta)
+	if err != nil {
+		PanicCrisis(Fmt("Error reading block meta: %v", err))
+	}
+	for i := 0; i < meta.PartsHeader.Total; i++ {
+		bs.db.Delete(calcBlockPartKey(height, i))
+	}
+	bs.db.Delete(calcBlockMetaKey(height))
+	bs.db.DeleteSync(nil)
+
+	bs.archiveDB.Delete(calcBlockCommitKey(height - 1))
+	bs.archiveDB.Delete(calcSeenCommitKey(height))
+	r = bs.GetReaderFromArchive(calcBlockMetaKey(height))
+	if r == nil {
+		return nil
+	}
+	meta = wire.ReadBinary(&types.BlockMeta{}, r, 0, &n, &err).(*types.BlockMeta)
+	if err != nil {
+		PanicCrisis(Fmt("Error reading archiveDB block meta: %v", err))
+	}
+	for i := 0; i < meta.PartsHeader.Total; i++ {
+		bs.archiveDB.Delete(calcBlockPartKey(height, i))
+	}
+	bs.archiveDB.Delete(calcBlockMetaKey(height))
+	bs.archiveDB.DeleteSync(nil)
+
+	return
+}
+
 func (bs *BlockStore) saveBlockPart(height int, index int, part *types.Part) {
 	if height != bs.Height()+1 {
 		PanicSanity(Fmt("BlockStore can only save contiguous blocks. Wanted %v, got %v", bs.Height()+1, height))
 	}
 	partBytes := wire.BinaryBytes(part)
 	bs.db.Set(calcBlockPartKey(height, index), partBytes)
+}
+
+func (bs *BlockStore) savePartToArchive(height int, index int, part *types.Part) {
+	partBytes := wire.BinaryBytes(part)
+	bs.archiveDB.Set(calcBlockPartKey(height, index), partBytes)
 }
 
 //-----------------------------------------------------------------------------
@@ -229,7 +321,8 @@ func calcSeenCommitKey(height int) []byte {
 var blockStoreKey = []byte("blockStore")
 
 type BlockStoreStateJSON struct {
-	Height int
+	Height       int
+	OriginHeight int
 }
 
 func (bsj BlockStoreStateJSON) Save(db dbm.DB) {
@@ -244,7 +337,8 @@ func LoadBlockStoreStateJSON(db dbm.DB) BlockStoreStateJSON {
 	bytes := db.Get(blockStoreKey)
 	if bytes == nil {
 		return BlockStoreStateJSON{
-			Height: 0,
+			Height:       0,
+			OriginHeight: 0,
 		}
 	}
 	bsj := BlockStoreStateJSON{}
